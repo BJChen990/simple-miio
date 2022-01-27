@@ -6,7 +6,7 @@ export class Preconditions {
     return value;
   }
 
-  static checkArgument(arg: boolean, message?: string) {
+  static checkArgument(arg: boolean, message?: string): asserts arg {
     if (!arg) {
       throw new Error(message ?? 'arugment check fail');
     }

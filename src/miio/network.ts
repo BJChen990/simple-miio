@@ -1,4 +1,5 @@
 import { createSocket, Socket, RemoteInfo } from 'dgram';
+import { remove } from '../utils/array_utils';
 
 export interface MessageHandler {
   (message: Buffer, remoteInfo: RemoteInfo): void;
@@ -8,6 +9,8 @@ export interface MiIOService {
   send(packet: Buffer, address: string, port: number): void;
   addMessageHandler(handler: MessageHandler): () => void;
 }
+
+type Unsubscriber = () => void;
 
 export class MiIONetwork implements MiIOService {
   private socketPromise: Promise<Socket> | undefined;
@@ -22,7 +25,7 @@ export class MiIONetwork implements MiIOService {
       return this.socketPromise;
     }
 
-    this.socketPromise = new Promise((resolve) => {
+    this.socketPromise = new Promise(resolve => {
       const socket = createSocket('udp4');
       socket.on('error', console.error);
 
@@ -37,33 +40,39 @@ export class MiIONetwork implements MiIOService {
         this.messageHandlers.forEach((handler) => handler(message, remoteInfo));
       };
       socket.on('message', this.messageHandler);
+
+      const closeHandler = () => socket.removeAllListeners();
+      socket.on('close', closeHandler)
       // Binding to local port to start listening.
       socket.bind();
     });
     return this.socketPromise;
   }
 
-  addMessageHandler(handler: MessageHandler) {
+  addMessageHandler(handler: MessageHandler): Unsubscriber {
     this.messageHandlers.push(handler);
     return () => {
       const { messageHandlers } = this;
-      const index = messageHandlers.findIndex(
-        (currentHandler) => currentHandler === handler
-      );
-      this.messageHandlers = [
-        ...messageHandlers.slice(0, index),
-        ...messageHandlers.slice(index + 1),
-      ];
+      const index = messageHandlers.findIndex(currentHandler => currentHandler === handler);
+      this.messageHandlers = remove(messageHandlers, index);
     };
   }
 
-  async send(packet: Buffer, address: string, port: number): Promise<void> {
+  send = async (packet: Buffer, address: string, port: number): Promise<number> => {
     const socket = await this.getSocket();
-    socket.send(packet, port, address);
+    return new Promise((resolve, reject) => socket.send(packet, port, address, (err, bytes) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve(bytes);
+      }
+    }));
   }
 
   close = async () => {
     const socket = await this.getSocket();
-    socket.close();
+    return new Promise<void>(resolve => {
+      socket.close(() => resolve());
+    });
   };
 }

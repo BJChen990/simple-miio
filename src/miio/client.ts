@@ -1,6 +1,7 @@
 import { Preconditions } from '../utils/preconditions';
 import { Packet, serialize, deserialize } from './serializer';
 import { MiIONetwork } from './network';
+import { remove } from '../utils/array_utils';
 
 const DEFAULT_PORT = 54321;
 
@@ -73,10 +74,7 @@ export class MiIOClient {
         ({ requestId }) => requestId === responseId
       );
       this.waitQueue[hash][index].resolve(packet);
-      this.waitQueue[hash] = [
-        ...this.waitQueue[hash].slice(0, index),
-        ...this.waitQueue[hash].slice(index + 1),
-      ];
+      this.waitQueue[hash] = remove(this.waitQueue[hash], index);
     });
   }
 
@@ -84,7 +82,6 @@ export class MiIOClient {
     if (Date.now() - (this.lastHandshake ?? 0) <= 10000) {
       return;
     }
-
     const packet: Packet = {
       isHandshake: true,
       deviceId: 0,
