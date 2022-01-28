@@ -1,5 +1,6 @@
-import { createCipheriv } from 'crypto';
+import { createCipheriv, createDecipheriv } from 'crypto';
 import { md5 } from '../utils/crypto_utils';
+import { Preconditions } from '../utils/preconditions';
 
 export const MAX_2_BYTES_BUFFER = Buffer.alloc(2, 0xff);
 export const MAX_4_BYTES_BUFFER = Buffer.alloc(4, 0xff);
@@ -153,5 +154,68 @@ export class RequestPacket extends BaseRequestPacket {
         (buffer?: Buffer): buffer is Buffer => !!buffer,
       ),
     );
+  }
+}
+
+export abstract class ResponsePacket implements Packet {
+  static from(buffer: Buffer) {
+    const magicNumber = buffer.slice(0, 2);
+    const packetLength = buffer.slice(2, 4).readUInt8();
+    const deviceid = buffer.slice(8, 12).readUInt16BE();
+    const stamp = buffer.slice(12, 16).readUInt16BE();
+    const checksum = buffer.slice(16, 32);
+    const data = buffer.slice(32);
+    Preconditions.checkArgument(magicNumber.equals(MAGIC_BUFFER), `Incorrect magic number: ${magicNumber}`);
+    Preconditions.checkArgument(packetLength === buffer.byteLength, `Package length mismatch. (${packetLength}/${buffer.byteLength})`);
+    if (data.length === 0) {
+      return new HandshakeResponsePacket(packetLength, deviceid, stamp, checksum, data);
+    }
+    return new NormalResponsePacket(packetLength, deviceid, stamp, checksum, data);
+  }
+
+  readonly magicNumber = MAGIC_BUFFER;
+  readonly unknown1 = DEFAULT_UNKNOWN_BUFFER;
+
+  constructor(readonly packetLength: number, readonly deviceId: number, readonly stamp: number, readonly checksum: Buffer, readonly data: Buffer) {}
+
+  abstract isChecksumValid(token?: Buffer): boolean;
+  abstract getDecryptedData(token?: Buffer): Buffer;
+}
+
+export class HandshakeResponsePacket extends ResponsePacket {
+  readonly type = 'HANDSHAKE';
+
+  isChecksumValid() {
+    return true;
+  }
+  getDecryptedData() {
+    return this.data;
+  }
+}
+
+export class NormalResponsePacket extends ResponsePacket {
+  readonly type = 'NORMAL';
+
+  isChecksumValid(token: Buffer) {
+    const header = Buffer.concat([
+      MAGIC_BUFFER,
+      numToBytes(this.packetLength, 2),
+      DEFAULT_UNKNOWN_BUFFER,
+      numToBytes(this.deviceId, 4),
+      numToBytes(this.stamp, 4),
+    ]);
+    const localChecksum = md5(
+      ...[header, token, this.data.byteLength > 0 ? this.data : undefined].filter(
+        (buffer: Buffer | undefined): buffer is Buffer => !!buffer,
+      ),
+    );
+    return !this.checksum.equals(localChecksum);
+  }
+
+  getDecryptedData(token: Buffer) {
+    const key = md5(token);
+    const iv = md5(key, token);
+    const decipher = createDecipheriv('aes-128-cbc', key, iv);
+    return Buffer.concat([decipher.update(this.data), decipher.final()]);
   }
 }

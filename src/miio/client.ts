@@ -2,6 +2,7 @@ import { Preconditions } from '../utils/preconditions';
 import { Packet, serialize, deserialize } from './serializer';
 import { MiIONetwork } from './network';
 import { remove } from '../utils/array_utils';
+import { ResponsePacket } from './packet';
 
 const DEFAULT_PORT = 54321;
 
@@ -19,7 +20,7 @@ export interface SimpleResponseSuccess<T> {
 
 interface WaitingRequest {
   requestId?: number;
-  resolve: (res: Packet) => void;
+  resolve: <T extends ResponsePacket>(res: T) => void;
   reject: (err: Error) => void;
 }
 
@@ -37,7 +38,7 @@ function isError(
 
 export class MiIOClient {
   protected counter = Math.floor(Math.random() * 10000);
-  private deviceTimestamp: number | undefined;
+  private deviceStamp: number | undefined;
   private lastHandshake: number | undefined;
   private deviceId: number | undefined;
   private waitQueue: {
@@ -63,12 +64,15 @@ export class MiIOClient {
         // Only check messages from the target device
         return;
       }
-      const packet = deserialize(message, this.token);
-      const { data } = packet;
-      const responseId =
-        data.byteLength > 0
-          ? (JSON.parse(data.toString()) as SimpleResponseSuccess<any>).id
-          : undefined;
+      const tokenBuffer = Buffer.from(this.token, 'hex');
+      const packet = deserialize(message);
+      if (!packet.isChecksumValid(tokenBuffer)) {
+        throw new Error('Checksum fails');
+      }
+      const data = packet.getDecryptedData(tokenBuffer);
+      const responseId = packet.type === 'NORMAL'
+        ? (JSON.parse(data.toString()) as SimpleResponseSuccess<any>).id
+        : undefined;
       const hash = MiIOClient.getWaitQueueHash(address, port);
       const index = this.waitQueue[hash].findIndex(
         ({ requestId }) => requestId === responseId
@@ -90,12 +94,12 @@ export class MiIOClient {
     };
     const response = await this.sendImpl(packet);
     this.deviceId = response.deviceId;
-    this.deviceTimestamp = response.timestamp;
+    this.deviceStamp = response.stamp;
     this.lastHandshake = Date.now();
   }
 
   private async sendImpl(packet: Packet, requestId?: number) {
-    const promise = new Promise<Packet>((resolve, reject) => {
+    const promise = new Promise<ResponsePacket>((resolve, reject) => {
       const hash = MiIOClient.getWaitQueueHash(this.address, this.port);
       if (this.waitQueue[hash] == null) {
         this.waitQueue[hash] = [];
@@ -125,7 +129,7 @@ export class MiIOClient {
       timestamp:
         Math.floor(
           (Date.now() - Preconditions.checkExists(this.lastHandshake)) * 0.001
-        ) + Preconditions.checkExists(this.deviceTimestamp),
+        ) + Preconditions.checkExists(this.deviceStamp),
       data: Buffer.from(JSON.stringify({ id: requestId, method, params })),
       isHandshake: false,
     };
