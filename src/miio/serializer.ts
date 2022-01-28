@@ -1,12 +1,11 @@
 import {
   MAGIC_BUFFER,
-  HEADER_BYTES,
-  MAX_4_BIT_BUFFER,
-  MAX_16_BIT_BUFFER,
   DEFAULT_UNKNOWN_BUFFER,
+  HandshakeRequestPacket,
+  RequestPacket,
 } from './packet';
 import { md5 } from '../utils/crypto_utils';
-import { createCipheriv, createDecipheriv } from 'crypto';
+import { createDecipheriv } from 'crypto';
 
 export interface Packet {
   deviceId: number;
@@ -14,13 +13,6 @@ export interface Packet {
   data: Buffer;
   isHandshake: boolean;
 }
-
-type Parameters<T extends (...args: any[]) => any> = T extends (...args: infer K) => any
-  ? K
-  : never;
-type ReturnType<T extends (...args: any[]) => any> = T extends (...args: any[]) => infer K
-  ? K
-  : never;
 
 const INVALID_MI_BUFFER_VALUE = 0;
 
@@ -74,32 +66,9 @@ export function serialize(packet: Packet, token: string): Buffer {
     throw new Error('Only handshake packet can be called without cipher');
   }
   if (packet.isHandshake) {
-    return Buffer.concat([
-      MAGIC_BUFFER,
-      numToBytes(HEADER_BYTES, 2),
-      MAX_4_BIT_BUFFER,
-      MAX_4_BIT_BUFFER,
-      MAX_4_BIT_BUFFER,
-      MAX_16_BIT_BUFFER,
-    ]);
+    return new HandshakeRequestPacket().raw;
   }
-  const { key, iv } = getCipherInfo(token);
-  const cipher = createCipheriv('aes-128-cbc', key, iv);
-  const data = Buffer.concat([cipher.update(Buffer.from(packet.data)), cipher.final()]);
-  const packetLength = numToBytes(HEADER_BYTES + data.byteLength, 2);
-  const header = Buffer.concat([
-    MAGIC_BUFFER,
-    packetLength,
-    DEFAULT_UNKNOWN_BUFFER,
-    numToBytes(packet.deviceId, 4),
-    numToBytes(packet.timestamp, 4),
-  ]);
-  const checksum = md5(
-    ...[header, getHexStringBuffer(token), data.byteLength > 0 ? data : undefined].filter(
-      (buffer: Buffer | undefined): buffer is Buffer => !!buffer,
-    ),
-  );
-  return Buffer.concat([header, checksum, data]);
+  return new RequestPacket(Buffer.from(token, 'hex'), packet.deviceId, packet.timestamp, packet.data).raw;
 }
 
 export function deserialize(buffer: Buffer, token: string): Packet {

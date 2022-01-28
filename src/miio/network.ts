@@ -42,7 +42,7 @@ export class MiIONetwork implements MiIOService {
       socket.on('message', this.messageHandler);
 
       const closeHandler = () => socket.removeAllListeners();
-      socket.on('close', closeHandler)
+      socket.on('close', closeHandler);
       // Binding to local port to start listening.
       socket.bind();
     });
@@ -62,12 +62,12 @@ export class MiIONetwork implements MiIOService {
     const socket = await this.getSocket();
     return new Promise((resolve, reject) => socket.send(packet, port, address, (err, bytes) => {
       if (err) {
-        reject(err)
+        reject(err);
       } else {
         resolve(bytes);
       }
     }));
-  }
+  };
 
   close = async () => {
     const socket = await this.getSocket();

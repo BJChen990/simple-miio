@@ -1,8 +1,29 @@
-export const MAX_2_BIT_BUFFER = Buffer.alloc(2, 0xff);
-export const MAX_4_BIT_BUFFER = Buffer.alloc(4, 0xff);
-export const MAX_16_BIT_BUFFER = Buffer.alloc(16, 0xff);
-export const DEFAULT_UNKNOWN_BUFFER = Buffer.alloc(4);
+import { createCipheriv } from 'crypto';
+import { md5 } from '../utils/crypto_utils';
+
+export const MAX_2_BYTES_BUFFER = Buffer.alloc(2, 0xff);
+export const MAX_4_BYTES_BUFFER = Buffer.alloc(4, 0xff);
+export const MAX_16_BYTES_BUFFER = Buffer.alloc(16, 0xff);
+export const DEFAULT_UNKNOWN_BUFFER = Buffer.alloc(4, 0x00);
 export const MAGIC_BUFFER = Buffer.of(0x21, 0x31);
+
+export function numToBytes(value: number, bytes: 1 | 2 | 4) {
+  const buffer = Buffer.alloc(bytes);
+  switch (bytes) {
+  case 1:
+    buffer.writeUInt8(value);
+    break;
+  case 2:
+    buffer.writeUInt16BE(value);
+    break;
+  case 4:
+    buffer.writeUInt32BE(value);
+    break;
+  default:
+    throw new Error();
+  }
+  return buffer;
+}
 
 // 2 (magic number) + 2 (data length) +
 // 4 (unknown) +
@@ -32,7 +53,9 @@ export const HEADER_BYTES = 32;
  *                 Mi Home Binary Protocol header
  *        Note that one tick mark represents one bit position.
  */
-export interface HeaderStruct {
+export interface Packet {
+  magicNumber: Buffer;
+
   // Packet length: 16 bits unsigned int
   // Length in bytes of the whole packet, including the header.
   packetLength: number;
@@ -40,7 +63,7 @@ export interface HeaderStruct {
   // Unknown1: 32 bits
   // This value is always 0,
   // except in the "Hello" packet, when it's 0xFFFFFFFF
-  unknown: number;
+  unknown1: Buffer;
 
   // Device ID: 32 bits
   // Unique number. Possibly derived from the MAC address.
@@ -49,7 +72,7 @@ export interface HeaderStruct {
 
   // Stamp: 32 bit unsigned int
   //     continously increasing counter
-  timestamp: number;
+  stamp: number;
 
   // MD5 checksum:
   //     calculated for the whole packet including the MD5 field itself,
@@ -63,4 +86,72 @@ export interface HeaderStruct {
   //     encrypted with AES-128: see below.
   //     length = packet_length - 0x20
   data: Buffer;
+}
+
+abstract class BaseRequestPacket implements Packet {
+  readonly magicNumber = MAGIC_BUFFER;
+  abstract readonly checksum: Buffer;
+  abstract readonly unknown1: Buffer;
+
+  constructor(
+    readonly deviceId: number,
+    readonly stamp: number,
+    readonly data: Buffer = Buffer.of()
+  ) {}
+
+  get packetLength() {
+    return HEADER_BYTES + this.data.byteLength;
+  }
+
+  get metadata() {
+    return Buffer.concat([
+      MAGIC_BUFFER,
+      numToBytes(HEADER_BYTES + this.data.byteLength, 2),
+      numToBytes(this.deviceId, 4),
+      numToBytes(this.stamp, 4),
+    ]);
+  }
+
+  get raw() {
+    return Buffer.concat([
+      this.metadata,
+      this.checksum,
+      this.data,
+    ]);
+  }
+}
+
+export class HandshakeRequestPacket extends BaseRequestPacket {
+  readonly checksum = MAX_16_BYTES_BUFFER;
+  readonly unknown1 = MAX_4_BYTES_BUFFER;
+
+  constructor() {
+    const maxBytesNumber = MAX_4_BYTES_BUFFER.readUInt16BE(); 
+    super(maxBytesNumber, maxBytesNumber);
+  }
+}
+
+export class RequestPacket extends BaseRequestPacket {
+  readonly unknown1 = DEFAULT_UNKNOWN_BUFFER;
+  constructor(readonly token: Buffer, deviceId: number, stamp: number, data: Buffer) {
+    super(deviceId, stamp, data);
+  }
+
+  get encryptedData() {
+    if (this.data.byteLength === 0) {
+      return undefined;
+    }
+    const key = md5(this.token);
+    const iv = md5(key, this.token);
+    const cipher = createCipheriv('aes-128-cbc', key, iv);
+    return Buffer.concat([cipher.update(Buffer.from(this.data)), cipher.final()]);
+  }
+
+  get checksum() {
+    return md5(
+      ...[this.metadata, this.token, this.encryptedData].filter(
+        (buffer?: Buffer): buffer is Buffer => !!buffer,
+      ),
+    );
+  }
 }
