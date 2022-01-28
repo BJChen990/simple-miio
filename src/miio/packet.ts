@@ -89,10 +89,11 @@ export interface Packet {
   data: Buffer;
 }
 
-abstract class BaseRequestPacket implements Packet {
+export abstract class RequestPacket implements Packet {
   readonly magicNumber = MAGIC_BUFFER;
   abstract readonly checksum: Buffer;
   abstract readonly unknown1: Buffer;
+  abstract readonly encryptedData?: Buffer;
 
   constructor(
     readonly deviceId: number,
@@ -107,34 +108,46 @@ abstract class BaseRequestPacket implements Packet {
   get metadata() {
     return Buffer.concat([
       MAGIC_BUFFER,
-      numToBytes(HEADER_BYTES + this.data.byteLength, 2),
+      numToBytes(
+        HEADER_BYTES + (this.encryptedData ?? Buffer.of()).byteLength,
+        2
+      ),
+      this.unknown1,
       numToBytes(this.deviceId, 4),
       numToBytes(this.stamp, 4),
     ]);
   }
 
   get raw() {
-    return Buffer.concat([
-      this.metadata,
-      this.checksum,
-      this.data,
-    ]);
+    return Buffer.concat(
+      [this.metadata, this.checksum, this.encryptedData].filter(
+        (buffer?: Buffer): buffer is Buffer => !!buffer
+      )
+    );
   }
 }
 
-export class HandshakeRequestPacket extends BaseRequestPacket {
+export class HandshakeRequestPacket extends RequestPacket {
   readonly checksum = MAX_16_BYTES_BUFFER;
   readonly unknown1 = MAX_4_BYTES_BUFFER;
 
   constructor() {
-    const maxBytesNumber = MAX_4_BYTES_BUFFER.readUInt16BE(); 
-    super(maxBytesNumber, maxBytesNumber);
+    super(MAX_4_BYTES_BUFFER.readUInt32BE(), MAX_4_BYTES_BUFFER.readUInt32BE());
+  }
+
+  get encryptedData() {
+    return undefined;
   }
 }
 
-export class RequestPacket extends BaseRequestPacket {
+export class NormalRequestPacket extends RequestPacket {
   readonly unknown1 = DEFAULT_UNKNOWN_BUFFER;
-  constructor(readonly token: Buffer, deviceId: number, stamp: number, data: Buffer) {
+  constructor(
+    readonly token: Buffer,
+    deviceId: number,
+    stamp: number,
+    data: Buffer
+  ) {
     super(deviceId, stamp, data);
   }
 
@@ -145,14 +158,17 @@ export class RequestPacket extends BaseRequestPacket {
     const key = md5(this.token);
     const iv = md5(key, this.token);
     const cipher = createCipheriv('aes-128-cbc', key, iv);
-    return Buffer.concat([cipher.update(Buffer.from(this.data)), cipher.final()]);
+    return Buffer.concat([
+      cipher.update(Buffer.from(this.data)),
+      cipher.final(),
+    ]);
   }
 
   get checksum() {
     return md5(
       ...[this.metadata, this.token, this.encryptedData].filter(
-        (buffer?: Buffer): buffer is Buffer => !!buffer,
-      ),
+        (buffer?: Buffer): buffer is Buffer => !!buffer
+      )
     );
   }
 }
@@ -160,23 +176,47 @@ export class RequestPacket extends BaseRequestPacket {
 export abstract class ResponsePacket implements Packet {
   static from(buffer: Buffer) {
     const magicNumber = buffer.slice(0, 2);
-    const packetLength = buffer.slice(2, 4).readUInt8();
-    const deviceid = buffer.slice(8, 12).readUInt16BE();
-    const stamp = buffer.slice(12, 16).readUInt16BE();
+    const packetLength = buffer.slice(2, 4).readUInt16BE();
+    const deviceid = buffer.slice(8, 12).readUInt32BE();
+    const stamp = buffer.slice(12, 16).readUInt32BE();
     const checksum = buffer.slice(16, 32);
     const data = buffer.slice(32);
-    Preconditions.checkArgument(magicNumber.equals(MAGIC_BUFFER), `Incorrect magic number: ${magicNumber}`);
-    Preconditions.checkArgument(packetLength === buffer.byteLength, `Package length mismatch. (${packetLength}/${buffer.byteLength})`);
-    if (data.length === 0) {
-      return new HandshakeResponsePacket(packetLength, deviceid, stamp, checksum, data);
+    Preconditions.checkArgument(
+      magicNumber.equals(MAGIC_BUFFER),
+      `Incorrect magic number: ${magicNumber}`
+    );
+    Preconditions.checkArgument(
+      packetLength === buffer.byteLength,
+      `Package length mismatch. (${packetLength}/${buffer.byteLength})`
+    );
+    if (data.byteLength === 0) {
+      return new HandshakeResponsePacket(
+        packetLength,
+        deviceid,
+        stamp,
+        checksum,
+        data
+      );
     }
-    return new NormalResponsePacket(packetLength, deviceid, stamp, checksum, data);
+    return new NormalResponsePacket(
+      packetLength,
+      deviceid,
+      stamp,
+      checksum,
+      data
+    );
   }
 
   readonly magicNumber = MAGIC_BUFFER;
   readonly unknown1 = DEFAULT_UNKNOWN_BUFFER;
 
-  constructor(readonly packetLength: number, readonly deviceId: number, readonly stamp: number, readonly checksum: Buffer, readonly data: Buffer) {}
+  constructor(
+    readonly packetLength: number,
+    readonly deviceId: number,
+    readonly stamp: number,
+    readonly checksum: Buffer,
+    readonly data: Buffer
+  ) {}
 
   abstract isChecksumValid(token?: Buffer): boolean;
   abstract getDecryptedData(token?: Buffer): Buffer;
@@ -200,16 +240,18 @@ export class NormalResponsePacket extends ResponsePacket {
     const header = Buffer.concat([
       MAGIC_BUFFER,
       numToBytes(this.packetLength, 2),
-      DEFAULT_UNKNOWN_BUFFER,
+      this.unknown1,
       numToBytes(this.deviceId, 4),
       numToBytes(this.stamp, 4),
     ]);
     const localChecksum = md5(
-      ...[header, token, this.data.byteLength > 0 ? this.data : undefined].filter(
-        (buffer: Buffer | undefined): buffer is Buffer => !!buffer,
-      ),
+      ...[
+        header,
+        token,
+        this.data.byteLength > 0 ? this.data : undefined,
+      ].filter((buffer: Buffer | undefined): buffer is Buffer => !!buffer)
     );
-    return !this.checksum.equals(localChecksum);
+    return this.checksum.equals(localChecksum);
   }
 
   getDecryptedData(token: Buffer) {
