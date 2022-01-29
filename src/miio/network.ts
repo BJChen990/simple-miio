@@ -1,43 +1,50 @@
-import { createSocket, Socket, RemoteInfo } from 'dgram';
+import { Socket, RemoteInfo } from 'dgram';
 import { remove } from '../utils/array_utils';
+import { Logger } from './logger';
 
 export interface MessageHandler {
   (message: Buffer, remoteInfo: RemoteInfo): void;
 }
 
 export interface MiIOService {
-  send(packet: Buffer, address: string, port: number): void;
-  addMessageHandler(handler: MessageHandler): () => void;
+  send(packet: Buffer, address: string, port: number): Promise<number>;
+  addMessageHandler(handler: MessageHandler): Unsubscriber;
+  close(): Promise<void>;
 }
 
 type Unsubscriber = () => void;
 
 export class MiIONetwork implements MiIOService {
-  private socketPromise: Promise<Socket> | undefined;
+  private socketPromise: Promise<void> | undefined;
   private messageHandlers: MessageHandler[] = [];
   private listeningHandler: (() => void) | undefined;
   private messageHandler:
     | ((buffer: Buffer, remoteInfo: RemoteInfo) => void)
     | undefined;
 
-  private getSocket(): Promise<Socket> {
+  constructor(
+    private readonly socket: Socket,
+    private readonly logger: Logger
+  ) {}
+
+  ensureReady(): Promise<void> {
     if (this.socketPromise) {
       return this.socketPromise;
     }
 
     this.socketPromise = new Promise(resolve => {
-      const socket = createSocket('udp4');
-      socket.on('error', console.error);
+      const { socket } = this;
+      socket.on('error', this.logger.error);
 
       this.listeningHandler = () => {
         socket.setBroadcast(true);
-        console.log('start listening on port ' + socket.address().port);
-        resolve(socket);
+        this.logger.log('start listening on port ' + socket.address().port);
+        resolve();
       };
       socket.on('listening', this.listeningHandler);
 
       this.messageHandler = (message, remoteInfo) => {
-        this.messageHandlers.forEach((handler) => handler(message, remoteInfo));
+        this.messageHandlers.forEach(handler => handler(message, remoteInfo));
       };
       socket.on('message', this.messageHandler);
 
@@ -53,26 +60,34 @@ export class MiIONetwork implements MiIOService {
     this.messageHandlers.push(handler);
     return () => {
       const { messageHandlers } = this;
-      const index = messageHandlers.findIndex(currentHandler => currentHandler === handler);
+      const index = messageHandlers.findIndex(
+        currentHandler => currentHandler === handler
+      );
       this.messageHandlers = remove(messageHandlers, index);
     };
   }
 
-  send = async (packet: Buffer, address: string, port: number): Promise<number> => {
-    const socket = await this.getSocket();
-    return new Promise((resolve, reject) => socket.send(packet, port, address, (err, bytes) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(bytes);
-      }
-    }));
+  send = async (
+    packet: Buffer,
+    address: string,
+    port: number
+  ): Promise<number> => {
+    await this.ensureReady();
+    return new Promise((resolve, reject) =>
+      this.socket.send(packet, port, address, (err, bytes) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(bytes);
+        }
+      })
+    );
   };
 
   close = async () => {
-    const socket = await this.getSocket();
+    await this.ensureReady();
     return new Promise<void>(resolve => {
-      socket.close(() => resolve());
+      this.socket.close(() => resolve());
     });
   };
 }
