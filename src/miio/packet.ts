@@ -187,7 +187,7 @@ export abstract class ResponsePacket implements Packet {
     );
     Preconditions.checkArgument(
       packetLength === buffer.byteLength,
-      `Package length mismatch. (${packetLength}/${buffer.byteLength})`
+      `Packet length mismatch. (${packetLength}/${buffer.byteLength})`
     );
     if (data.byteLength === 0) {
       return new HandshakeResponsePacket(
