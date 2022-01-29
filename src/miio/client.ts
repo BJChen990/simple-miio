@@ -2,9 +2,9 @@ import { Preconditions } from '../utils/preconditions';
 import { MiIONetwork } from './network';
 import { remove } from '../utils/array_utils';
 import {
-  HandshakeRequestPacket,
-  NormalRequestPacket,
-  RequestPacket,
+  HandshakeRequest,
+  NormalRequest,
+  RequestSerializer,
   ResponsePacket,
 } from './packet';
 
@@ -57,6 +57,7 @@ export class MiIOClient {
   constructor(
     private readonly client: MiIONetwork,
     private readonly token: string,
+    private readonly serializer: RequestSerializer,
     private readonly address: string,
     private readonly port: number = DEFAULT_PORT
   ) {}
@@ -91,14 +92,14 @@ export class MiIOClient {
     if (Date.now() - (this.lastHandshake ?? 0) <= 10000) {
       return;
     }
-    const response = await this.sendImpl(new HandshakeRequestPacket());
+    const response = await this.sendImpl(new HandshakeRequest());
     this.deviceId = response.deviceId;
     this.deviceStamp = response.stamp;
     this.lastHandshake = Date.now();
   }
 
-  private async sendImpl<T extends RequestPacket>(
-    packet: T,
+  private async sendImpl<T extends HandshakeRequest | NormalRequest>(
+    request: T,
     requestId?: number
   ) {
     const promise = new Promise<ResponsePacket>((resolve, reject) => {
@@ -120,7 +121,7 @@ export class MiIOClient {
         reject,
       });
     });
-    await this.client.send(packet.raw, this.address, this.port);
+    await this.client.send(this.serializer.serialize(request, Buffer.from(this.token, 'hex')).raw, this.address, this.port);
     return promise;
   }
 
@@ -132,15 +133,14 @@ export class MiIOClient {
     const requestId = ++this.counter;
 
     const tokenBuffer = Buffer.from(this.token, 'hex');
-    const packet = new NormalRequestPacket(
-      tokenBuffer,
+    const request = new NormalRequest(
       Preconditions.checkExists(this.deviceId),
       Math.floor(
         (Date.now() - Preconditions.checkExists(this.lastHandshake)) * 0.001
       ) + Preconditions.checkExists(this.deviceStamp),
       Buffer.from(JSON.stringify({ id: requestId, method, params }))
     );
-    const response = await this.sendImpl(packet, requestId);
+    const response = await this.sendImpl(request, requestId);
     const responseData = response.getDecryptedData(tokenBuffer);
     return responseData ? JSON.parse(responseData.toString()) : undefined;
   }

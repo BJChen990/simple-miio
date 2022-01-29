@@ -1,14 +1,21 @@
 import {
-  HandshakeRequestPacket,
+  HandshakeRequest,
   HandshakeResponsePacket,
-  NormalRequestPacket,
-  NormalResponsePacket,
+  NormalRequest,
+  RequestSerializer,
   ResponsePacket,
 } from '../packet';
 
-describe('HandshakeRequestPacket', () => {
-  it('should follow the specification', () => {
-    // prettier-ignore
+const TOKEN = Buffer.from('12345678901234567890123456789012', 'hex');
+
+describe('RequestSerializer', () => {
+  let serializer: RequestSerializer;
+
+  beforeEach(() => {
+    serializer = new RequestSerializer(TOKEN);
+  });
+
+  it('serialize handshake request correctly', () => {
     const buffer = Buffer.of(
       0x21, 0x31, 0x00, 32,
       0xff, 0xff, 0xff, 0xff,
@@ -19,12 +26,11 @@ describe('HandshakeRequestPacket', () => {
       0xff, 0xff, 0xff, 0xff,
       0xff, 0xff, 0xff, 0xff
     );
-    expect(new HandshakeRequestPacket().raw).toEqual(buffer);
+    expect(serializer.serialize(new HandshakeRequest()).raw).toEqual(buffer);
   });
-});
 
-describe('NormalRequestPacket', () => {
-  it('should follow the specification', () => {
+  it('serialize normal requests correctly', () => {
+
     // prettier-ignore
     const buffer = Buffer.of(
       0x21, 0x31, 0x00, 48,
@@ -45,14 +51,8 @@ describe('NormalRequestPacket', () => {
       0xfb, 0xde, 0xf9, 0xec,
       0x36, 0x98, 0xcb, 0x8f,
     );
-    expect(
-      new NormalRequestPacket(
-        Buffer.from('12345678901234567890123456789012', 'hex'),
-        5,
-        16,
-        Buffer.from('Hello world!', 'utf-8')
-      ).raw
-    ).toEqual(buffer);
+    const request = new NormalRequest(5, 16, Buffer.from('Hello world!'));
+    expect(serializer.serialize(request).raw).toEqual(buffer);
   });
 });
 
