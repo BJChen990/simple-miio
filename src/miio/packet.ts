@@ -6,6 +6,7 @@ export const MAX_2_BYTES_BUFFER = Buffer.alloc(2, 0xff);
 export const MAX_4_BYTES_BUFFER = Buffer.alloc(4, 0xff);
 export const MAX_4_BYTES_NUMBER = MAX_4_BYTES_BUFFER.readUInt32BE();
 export const MAX_16_BYTES_BUFFER = Buffer.alloc(16, 0xff);
+export const MIN_16_BYTES_BUFFER = Buffer.alloc(16, 0x00);
 export const DEFAULT_UNKNOWN_BUFFER = Buffer.alloc(4, 0x00);
 export const MAGIC_BUFFER = Buffer.of(0x21, 0x31);
 
@@ -90,95 +91,6 @@ export interface Packet {
   data: Buffer;
 }
 
-export abstract class ResponsePacket implements Packet {
-  static from(buffer: Buffer) {
-    const magicNumber = buffer.slice(0, 2);
-    const packetLength = buffer.slice(2, 4).readUInt16BE();
-    const deviceid = buffer.slice(8, 12).readUInt32BE();
-    const stamp = buffer.slice(12, 16).readUInt32BE();
-    const checksum = buffer.slice(16, 32);
-    const data = buffer.slice(32);
-    Preconditions.checkArgument(
-      magicNumber.equals(MAGIC_BUFFER),
-      `Incorrect magic number: ${magicNumber}`
-    );
-    Preconditions.checkArgument(
-      packetLength === buffer.byteLength,
-      `Packet length mismatch. (${packetLength}/${buffer.byteLength})`
-    );
-    if (data.byteLength === 0) {
-      return new HandshakeResponsePacket(
-        packetLength,
-        deviceid,
-        stamp,
-        checksum,
-        data
-      );
-    }
-    return new NormalResponsePacket(
-      packetLength,
-      deviceid,
-      stamp,
-      checksum,
-      data
-    );
-  }
-
-  readonly magicNumber = MAGIC_BUFFER;
-  readonly unknown1 = DEFAULT_UNKNOWN_BUFFER;
-
-  constructor(
-    readonly packetLength: number,
-    readonly deviceId: number,
-    readonly stamp: number,
-    readonly checksum: Buffer,
-    readonly data: Buffer
-  ) {}
-
-  abstract isChecksumValid(token?: Buffer): boolean;
-  abstract getDecryptedData(token?: Buffer): Buffer;
-}
-
-export class HandshakeResponsePacket extends ResponsePacket {
-  readonly type = 'HANDSHAKE';
-
-  isChecksumValid() {
-    return true;
-  }
-  getDecryptedData() {
-    return this.data;
-  }
-}
-
-export class NormalResponsePacket extends ResponsePacket {
-  readonly type = 'NORMAL';
-
-  isChecksumValid(token: Buffer) {
-    const header = Buffer.concat([
-      MAGIC_BUFFER,
-      numToBytes(this.packetLength, 2),
-      this.unknown1,
-      numToBytes(this.deviceId, 4),
-      numToBytes(this.stamp, 4),
-    ]);
-    const localChecksum = md5(
-      ...[
-        header,
-        token,
-        this.data.byteLength > 0 ? this.data : undefined,
-      ].filter((buffer: Buffer | undefined): buffer is Buffer => !!buffer)
-    );
-    return this.checksum.equals(localChecksum);
-  }
-
-  getDecryptedData(token: Buffer) {
-    const key = md5(token);
-    const iv = md5(key, token);
-    const decipher = createDecipheriv('aes-128-cbc', key, iv);
-    return Buffer.concat([decipher.update(this.data), decipher.final()]);
-  }
-}
-
 export class PacketImpl implements Packet {
   constructor(
     readonly magicNumber: Buffer,
@@ -229,21 +141,29 @@ export class PacketImpl implements Packet {
     );
   }
 }
-export interface BaseMiIORequest {
+export interface BaseMiIOMessage {
   deviceId: number;
   stamp: number;
   data: Buffer;
 }
 
-export class HandshakeRequest implements BaseMiIORequest {
+export class HandshakeRequest implements BaseMiIOMessage {
   readonly type = 'HANDSHAKE';
   readonly deviceId = MAX_4_BYTES_NUMBER;
   readonly stamp = MAX_4_BYTES_NUMBER;
   readonly data = Buffer.of();
 }
 
-export class NormalRequest implements BaseMiIORequest {
+export class NormalRequest implements BaseMiIOMessage {
   readonly type = 'NORMAL';
+  constructor(
+    readonly deviceId: number,
+    readonly stamp: number,
+    readonly data: Buffer
+  ) {}
+}
+
+export class MiIOResponse implements BaseMiIOMessage {
   constructor(
     readonly deviceId: number,
     readonly stamp: number,
@@ -253,8 +173,11 @@ export class NormalRequest implements BaseMiIORequest {
 
 export type MiIORequest = HandshakeRequest | NormalRequest;
 
-export interface Serializer<T> {
-  serialize(req: T): Packet;
+export interface Serializer<Req> {
+  serialize(req: Req): Packet;
+}
+export interface Deserializer<Res> {
+  deserialize(packet: Packet): Res;
 }
 
 export class RequestSerializer implements Serializer<MiIORequest> {
@@ -267,7 +190,7 @@ export class RequestSerializer implements Serializer<MiIORequest> {
     const key = md5(this.token);
     const iv = md5(key, this.token);
     const cipher = createCipheriv('aes-128-cbc', key, iv);
-    return Buffer.concat([cipher.update(Buffer.from(data)), cipher.final()]);
+    return Buffer.concat([cipher.update(data), cipher.final()]);
   }
 
   private calculateChecksum(
@@ -309,6 +232,60 @@ export class RequestSerializer implements Serializer<MiIORequest> {
       stamp,
       checksum,
       encryptedData
+    );
+  }
+}
+
+export class ResponseDeserializer implements Deserializer<MiIOResponse> {
+  constructor(private readonly token: Buffer) {}
+
+  private isChecksumValid(packet: Packet) {
+    const header = Buffer.concat([
+      packet.magicNumber,
+      numToBytes(packet.packetLength, 2),
+      packet.unknown1,
+      numToBytes(packet.deviceId, 4),
+      numToBytes(packet.stamp, 4),
+    ]);
+    const localChecksum = md5(
+      ...[
+        header,
+        this.token,
+        packet.data.byteLength > 0 ? packet.data : undefined,
+      ].filter((buffer: Buffer | undefined): buffer is Buffer => !!buffer)
+    );
+    return packet.checksum.equals(localChecksum);
+  }
+
+  private decryptedData(data: Buffer) {
+    if (data.byteLength === 0) {
+      return data;
+    }
+    const key = md5(this.token);
+    const iv = md5(key, this.token);
+    const decipher = createDecipheriv('aes-128-cbc', key, iv);
+    return Buffer.concat([decipher.update(data), decipher.final()]);
+  }
+
+  private isHandshake(packet: Packet) {
+    return (
+      packet.unknown1.equals(DEFAULT_UNKNOWN_BUFFER) &&
+      packet.packetLength === HEADER_BYTES &&
+      packet.checksum.equals(MIN_16_BYTES_BUFFER)
+    );
+  }
+
+  deserialize(packet: Packet) {
+    if (!this.isHandshake(packet)) {
+      Preconditions.checkArgument(
+        this.isChecksumValid(packet),
+        'Checksum failed.'
+      );
+    }
+    return new MiIOResponse(
+      packet.deviceId,
+      packet.stamp,
+      this.decryptedData(packet.data)
     );
   }
 }

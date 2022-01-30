@@ -1,9 +1,10 @@
 import {
   HandshakeRequest,
-  HandshakeResponsePacket,
+  MiIOResponse,
   NormalRequest,
+  PacketImpl,
   RequestSerializer,
-  ResponsePacket,
+  ResponseDeserializer,
 } from '../packet';
 
 const TOKEN = Buffer.from('12345678901234567890123456789012', 'hex');
@@ -16,6 +17,7 @@ describe('RequestSerializer', () => {
   });
 
   it('serialize handshake request correctly', () => {
+    // prettier-ignore
     const buffer = Buffer.of(
       0x21, 0x31, 0x00, 32,
       0xff, 0xff, 0xff, 0xff,
@@ -30,7 +32,6 @@ describe('RequestSerializer', () => {
   });
 
   it('serialize normal requests correctly', () => {
-
     // prettier-ignore
     const buffer = Buffer.of(
       0x21, 0x31, 0x00, 48,
@@ -56,7 +57,7 @@ describe('RequestSerializer', () => {
   });
 });
 
-describe('Response Packet', () => {
+describe('PacketImpl', () => {
   it('throws error when using magic number is incorrect', () => {
     // prettier-ignore
     const buffer = Buffer.of(
@@ -78,7 +79,7 @@ describe('Response Packet', () => {
       0xfb, 0xde, 0xf9, 0xec,
       0x36, 0x98, 0xcb, 0x8f,
     );
-    expect(() => ResponsePacket.from(buffer)).toThrow('magic number');
+    expect(() => PacketImpl.from(buffer)).toThrow('magic number');
   });
 
   it('throws error when packet length mismatch', () => {
@@ -99,33 +100,20 @@ describe('Response Packet', () => {
       // Data
       0x40, 0x59, 0x6e, 0x39,
     );
-    expect(() => ResponsePacket.from(buffer)).toThrow('Packet length');
+    expect(() => PacketImpl.from(buffer)).toThrow('Packet length');
   });
+});
 
-  it('throws error when packet length mismatch', () => {
-    // prettier-ignore
-    const buffer = Buffer.of(
-      0x21, 0x31, 0x00, 32,
-      // Unknown
-      0x00, 0x00, 0x00, 0x00,
-      // Device ID: 5
-      0x00, 0x00, 0x00, 0x05,
-      // Stamp: 16
-      0x00, 0x00, 0x00, 0x10,
-      // Checksum
-      0x42, 0x71, 0xbe, 0x9a,
-      0xf7, 0x1b, 0x39, 0x23,
-      0x48, 0x72, 0x82, 0xf7,
-      0x40, 0x59, 0x6e, 0x39,
-      // Data
-      0x40, 0x59, 0x6e, 0x39,
-    );
-    expect(() => ResponsePacket.from(buffer)).toThrow('Packet length');
+describe('ResponseDeserializer', () => {
+  let deserializer: ResponseDeserializer;
+
+  beforeEach(() => {
+    deserializer = new ResponseDeserializer(TOKEN);
   });
 
   it('parses handshake packet correctly', () => {
     // prettier-ignore
-    const buffer = Buffer.of(
+    const packet = PacketImpl.from(Buffer.of(
       0x21, 0x31, 0x00, 32,
       // Unknown
       0x00, 0x00, 0x00, 0x00,
@@ -134,32 +122,18 @@ describe('Response Packet', () => {
       // Stamp: 16
       0x00, 0x00, 0x00, 0x10,
       // Checksum
-      0x42, 0x71, 0xbe, 0x9a,
-      0xf7, 0x1b, 0x39, 0x23,
-      0x48, 0x72, 0x82, 0xf7,
-      0x40, 0x59, 0x6e, 0x39,
-    );
-    const response = ResponsePacket.from(buffer);
-    expect(response).toEqual(
-      new HandshakeResponsePacket(
-        32,
-        5,
-        16,
-        // prettier-ignore
-        Buffer.of(
-          0x42, 0x71, 0xbe, 0x9a,
-          0xf7, 0x1b, 0x39, 0x23,
-          0x48, 0x72, 0x82, 0xf7,
-          0x40, 0x59, 0x6e, 0x39
-        ),
-        Buffer.of()
-      )
-    );
+      0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+    ));
+    const response = deserializer.deserialize(packet);
+    expect(response).toEqual(new MiIOResponse(5, 16, Buffer.of()));
   });
 
   it('parses normal packet correctly', () => {
     // prettier-ignore
-    const buffer = Buffer.of(
+    const packet = PacketImpl.from(Buffer.of(
       0x21, 0x31, 0x00, 48,
       // Unknown
       0x00, 0x00, 0x00, 0x00,
@@ -177,15 +151,10 @@ describe('Response Packet', () => {
       0x31, 0x1e, 0x5d, 0x8c,
       0xfb, 0xde, 0xf9, 0xec,
       0x36, 0x98, 0xcb, 0x8f,
+    ));
+    const response = deserializer.deserialize(packet);
+    expect(response).toEqual(
+      new MiIOResponse(5, 16, Buffer.from('Hello world!'))
     );
-    const response = ResponsePacket.from(buffer);
-    expect(response).toEqual(expect.objectContaining({
-      deviceId: 5,
-      stamp: 16,
-      packetLength: 48,
-    }));
-    const token = Buffer.from('12345678901234567890123456789012', 'hex');
-    expect(response.isChecksumValid(token)).toBe(true);
-    expect(response.getDecryptedData(token)).toEqual(Buffer.from('Hello world!'));
   });
 });

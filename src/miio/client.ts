@@ -3,9 +3,12 @@ import { MiIONetwork } from './network';
 import { remove } from '../utils/array_utils';
 import {
   HandshakeRequest,
+  MiIORequest,
+  MiIOResponse,
   NormalRequest,
+  PacketImpl,
   RequestSerializer,
-  ResponsePacket,
+  ResponseDeserializer,
 } from './packet';
 
 const DEFAULT_PORT = 54321;
@@ -25,7 +28,7 @@ export interface SimpleResponseSuccess<T> {
 interface WaitingRequest {
   requestId?: number;
   timeout: NodeJS.Timeout;
-  resolve: <T extends ResponsePacket>(res: T) => void;
+  resolve: <T extends PacketImpl>(res: T) => void;
   reject: (err: Error) => void;
 }
 
@@ -56,8 +59,8 @@ export class MiIOClient {
 
   constructor(
     private readonly client: MiIONetwork,
-    private readonly token: string,
     private readonly serializer: RequestSerializer,
+    private readonly deserializer: ResponseDeserializer,
     private readonly address: string,
     private readonly port: number = DEFAULT_PORT
   ) {}
@@ -68,16 +71,11 @@ export class MiIOClient {
         // Only check messages from the target device
         return;
       }
-      const tokenBuffer = Buffer.from(this.token, 'hex');
-      const packet = ResponsePacket.from(message);
-      if (!packet.isChecksumValid(tokenBuffer)) {
-        throw new Error('Checksum fails');
-      }
-      const data = packet.getDecryptedData(tokenBuffer);
-      const responseId =
-        packet.type === 'NORMAL'
-          ? (JSON.parse(data.toString()) as SimpleResponseSuccess<any>).id
-          : undefined;
+      const packet = PacketImpl.from(message);
+      const response = this.deserializer.deserialize(packet);
+      const responseId = response.data.byteLength !== 0
+        ? (JSON.parse(response.data.toString()) as SimpleResponseSuccess<any>).id
+        : undefined;
       const hash = MiIOClient.getWaitQueueHash(address, port);
       const index = this.waitQueue[hash].findIndex(
         ({ requestId }) => requestId === responseId
@@ -98,11 +96,11 @@ export class MiIOClient {
     this.lastHandshake = Date.now();
   }
 
-  private async sendImpl<T extends HandshakeRequest | NormalRequest>(
+  private async sendImpl<T extends MiIORequest>(
     request: T,
     requestId?: number
   ) {
-    const promise = new Promise<ResponsePacket>((resolve, reject) => {
+    const promise = new Promise<PacketImpl>((resolve, reject) => {
       const hash = MiIOClient.getWaitQueueHash(this.address, this.port);
       if (this.waitQueue[hash] == null) {
         this.waitQueue[hash] = [];
@@ -121,7 +119,7 @@ export class MiIOClient {
         reject,
       });
     });
-    await this.client.send(this.serializer.serialize(request, Buffer.from(this.token, 'hex')).raw, this.address, this.port);
+    await this.client.send(this.serializer.serialize(request).raw, this.address, this.port);
     return promise;
   }
 
@@ -132,7 +130,6 @@ export class MiIOClient {
     await this.maybeHandshake();
     const requestId = ++this.counter;
 
-    const tokenBuffer = Buffer.from(this.token, 'hex');
     const request = new NormalRequest(
       Preconditions.checkExists(this.deviceId),
       Math.floor(
@@ -140,9 +137,11 @@ export class MiIOClient {
       ) + Preconditions.checkExists(this.deviceStamp),
       Buffer.from(JSON.stringify({ id: requestId, method, params }))
     );
-    const response = await this.sendImpl(request, requestId);
-    const responseData = response.getDecryptedData(tokenBuffer);
-    return responseData ? JSON.parse(responseData.toString()) : undefined;
+    const packet = await this.sendImpl(request, requestId);
+    const response = this.deserializer.deserialize(packet);
+    return response.data.byteLength > 0
+      ? JSON.parse(response.data.toString())
+      : undefined;
   }
 
   async simpleSend<A>(method: string, params: A): Promise<void> {

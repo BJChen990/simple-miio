@@ -80,7 +80,7 @@ describe('MiIONetwork', () => {
       const messageHandler = findHandler(socket.on, 'message');
       unsubscribe();
 
-      messageHandler();
+      messageHandler(Buffer.of(), {});
       expect(handler).not.toBeCalled();
     });
   });

@@ -14,6 +14,25 @@ export interface MiIOService {
 
 type Unsubscriber = () => void;
 
+const BYTE_LETTERS = 2;
+const BYTE_PER_ROW = 4;
+
+function formatPacketBuffer(buffer: string, byteLetters = BYTE_LETTERS, bytesPerRow = BYTE_PER_ROW) {
+  const chunkCount = Math.ceil(buffer.length / byteLetters);
+  const chunks = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const start = i * byteLetters;
+    chunks.push(buffer.slice(start, start + byteLetters)); 
+  }
+  const rowCount = Math.ceil(chunks.length / bytesPerRow);
+  const rows = [];
+  for (let i = 0; i < rowCount; i++) {
+    const start = i * bytesPerRow;
+    rows.push(chunks.slice(start, start + bytesPerRow).join(' '));
+  }
+  return rows.join('\n');
+}
+
 export class MiIONetwork implements MiIOService {
   private socketPromise: Promise<void> | undefined;
   private messageHandlers: MessageHandler[] = [];
@@ -44,6 +63,8 @@ export class MiIONetwork implements MiIOService {
       socket.on('listening', this.listeningHandler);
 
       this.messageHandler = (message, remoteInfo) => {
+        this.logger.debug('Receive message:');
+        this.logger.debug(formatPacketBuffer(message.toString('hex')));
         this.messageHandlers.forEach(handler => handler(message, remoteInfo));
       };
       socket.on('message', this.messageHandler);
@@ -73,15 +94,17 @@ export class MiIONetwork implements MiIOService {
     port: number
   ): Promise<number> => {
     await this.ensureReady();
-    return new Promise((resolve, reject) =>
+    return new Promise((resolve, reject) => {
+      this.logger.debug('Send message:');
+      this.logger.debug(formatPacketBuffer(packet.toString('hex')));
       this.socket.send(packet, port, address, (err, bytes) => {
         if (err) {
           reject(err);
         } else {
           resolve(bytes);
         }
-      })
-    );
+      });
+    });
   };
 
   close = async () => {
