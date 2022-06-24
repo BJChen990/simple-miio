@@ -1,11 +1,11 @@
 import {
   HandshakeRequest,
-  MiIOResponse,
+  HandshakeResponse,
   NormalRequest,
+  NormalResponse,
   PacketImpl,
-  RequestSerializer,
-  ResponseDeserializer,
 } from '../packet';
+import { RequestSerializer, ResponseDeserializer } from '../serializer';
 
 const TOKEN = Buffer.from('12345678901234567890123456789012', 'hex');
 
@@ -128,7 +128,7 @@ describe('ResponseDeserializer', () => {
       0x00, 0x00, 0x00, 0x00,
     ));
     const response = deserializer.deserialize(packet);
-    expect(response).toEqual(new MiIOResponse(5, 16, Buffer.of()));
+    expect(response).toEqual(new HandshakeResponse(5, 16, Buffer.of()));
   });
 
   it('parses normal packet correctly', () => {
@@ -154,7 +154,7 @@ describe('ResponseDeserializer', () => {
     ));
     const response = deserializer.deserialize(packet);
     expect(response).toEqual(
-      new MiIOResponse(5, 16, Buffer.from('Hello world!'))
+      new NormalResponse(5, 16, Buffer.from('Hello world!'))
     );
   });
 });

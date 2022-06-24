@@ -1,6 +1,7 @@
 import { Socket } from 'dgram';
 import { ConsoleLogger, Logger, LogLevel } from '../logger';
 import { MiIONetwork } from '../network';
+import { createPacket } from '../tests/utils';
 
 jest.mock('dgram');
 jest.mock('../logger');
@@ -36,11 +37,11 @@ describe('MiIONetwork', () => {
           cb?.(null, 100);
         }
       );
-      const buffer = Buffer.of();
-      const result = await network.send(buffer, 'ADDRESS', 8080);
+      const packet = createPacket('');
+      const result = await network.send(packet, 'ADDRESS', 8080);
       expect(ensureReady).toHaveBeenCalledTimes(1);
       expect(socket.send).toHaveBeenCalledWith(
-        buffer,
+        packet.raw,
         8080,
         'ADDRESS',
         expect.any(Function)
@@ -50,7 +51,7 @@ describe('MiIONetwork', () => {
   });
 
   describe('close', () => {
-    it('sends packets after initialized', async () => {
+    it('closes socket after being closed', async () => {
       const ensureReady = jest.spyOn(network, 'ensureReady');
       ensureReady.mockResolvedValue();
       socket.close.mockImplementation((cb?: () => void) => cb?.());

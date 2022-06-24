@@ -1,18 +1,15 @@
-import { Preconditions } from '../utils/preconditions';
 import { MiIONetwork } from './network';
 import { remove } from '../utils/array_utils';
 import {
   HandshakeRequest,
   MiIORequest,
-  MiIOResponse,
   NormalRequest,
   PacketImpl,
-  RequestSerializer,
-  ResponseDeserializer,
 } from './packet';
+import { RequestSerializer, ResponseDeserializer } from './serializer';
+import { Logger } from './logger';
 
-const DEFAULT_PORT = 54321;
-
+const DEFAULT_TIMEOUT = 10000;
 export interface RequestData<T> {
   id: number;
   method: string;
@@ -25,33 +22,25 @@ export interface SimpleResponseSuccess<T> {
   exec_time: number;
 }
 
-interface WaitingRequest {
+export interface WaitingRequest {
   requestId?: number;
   timeout: NodeJS.Timeout;
   resolve: <T extends PacketImpl>(res: T) => void;
   reject: (err: Error) => void;
 }
 
-type SimpleResponseError = {
-  error: { code: string; message: string };
-  id: number;
+type HandshakeInfo = {
+  deviceStamp: number;
+  handshakeTimestamp: number;
+  deviceId: number;
 };
-type SimpleResponse<T> = SimpleResponseError | SimpleResponseSuccess<T>;
-
-function isError(
-  response: SimpleResponse<any>
-): response is SimpleResponseError {
-  return !!(response as SimpleResponseError).error;
-}
 
 export class MiIOClient {
-  protected counter = Math.floor(Math.random() * 10000);
-  private deviceStamp: number | undefined;
-  private lastHandshake: number | undefined;
-  private deviceId: number | undefined;
-  private waitQueue: {
-    [addressPortHash: string]: WaitingRequest[];
-  } = {};
+  protected counter: number;
+
+  private handshakeInfo: HandshakeInfo | undefined;
+
+  static DEFAULT_PORT = 54321;
 
   private static getWaitQueueHash(address: string, port: number) {
     return `address:${address}+port:${port}`;
@@ -61,39 +50,67 @@ export class MiIOClient {
     private readonly client: MiIONetwork,
     private readonly serializer: RequestSerializer,
     private readonly deserializer: ResponseDeserializer,
-    private readonly address: string,
-    private readonly port: number = DEFAULT_PORT
-  ) {}
+    private readonly logger: Logger,
+    private readonly config: {
+      address: string;
+      port: number;
+      handshakeTimeout?: number;
+      counter?: number;
+    },
+    private readonly waitQueue: {
+      [addressPortHash: string]: WaitingRequest[];
+    } = {}
+  ) {
+    this.counter = this.config.counter ?? Math.floor(Math.random() * 10000);
+  }
 
   subscribeToMessages() {
     return this.client.addMessageHandler((message, { address, port }) => {
-      if (address !== this.address || this.port !== port) {
+      if (address !== this.config.address || this.config.port !== port) {
         // Only check messages from the target device
         return;
       }
       const packet = PacketImpl.from(message);
       const response = this.deserializer.deserialize(packet);
-      const responseId = response.data.byteLength !== 0
-        ? (JSON.parse(response.data.toString()) as SimpleResponseSuccess<any>).id
-        : undefined;
+      const responseId =
+        response.type === 'NORMAL'
+          ? (JSON.parse(response.data.toString()) as SimpleResponseSuccess<any>)
+            .id
+          : undefined;
       const hash = MiIOClient.getWaitQueueHash(address, port);
       const index = this.waitQueue[hash].findIndex(
         ({ requestId }) => requestId === responseId
       );
+      if (index) {
+        this.logger.warn(
+          `No pending promise found for ${responseId}. Possible options: ${this.waitQueue[
+            hash
+          ]
+            .map(r => r.requestId)
+            .join(' ,')}.`
+        );
+        return;
+      }
       this.waitQueue[hash][index].resolve(packet);
       clearTimeout(this.waitQueue[hash][index].timeout);
       this.waitQueue[hash] = remove(this.waitQueue[hash], index);
     });
   }
 
-  private async maybeHandshake() {
-    if (Date.now() - (this.lastHandshake ?? 0) <= 10000) {
-      return;
+  async getRequestMetadata() {
+    if (
+      this.handshakeInfo == null ||
+      Date.now() - this.handshakeInfo.handshakeTimestamp >
+        (this.config.handshakeTimeout ?? DEFAULT_TIMEOUT)
+    ) {
+      const response = await this.sendImpl(new HandshakeRequest());
+      this.handshakeInfo = {
+        deviceId: response.deviceId,
+        deviceStamp: response.stamp,
+        handshakeTimestamp: Date.now(),
+      };
     }
-    const response = await this.sendImpl(new HandshakeRequest());
-    this.deviceId = response.deviceId;
-    this.deviceStamp = response.stamp;
-    this.lastHandshake = Date.now();
+    return this.handshakeInfo;
   }
 
   private async sendImpl<T extends MiIORequest>(
@@ -101,7 +118,10 @@ export class MiIOClient {
     requestId?: number
   ) {
     const promise = new Promise<PacketImpl>((resolve, reject) => {
-      const hash = MiIOClient.getWaitQueueHash(this.address, this.port);
+      const hash = MiIOClient.getWaitQueueHash(
+        this.config.address,
+        this.config.port
+      );
       if (this.waitQueue[hash] == null) {
         this.waitQueue[hash] = [];
       }
@@ -119,7 +139,11 @@ export class MiIOClient {
         reject,
       });
     });
-    await this.client.send(this.serializer.serialize(request).raw, this.address, this.port);
+    await this.client.send(
+      this.serializer.serialize(request),
+      this.config.address,
+      this.config.port
+    );
     return promise;
   }
 
@@ -127,14 +151,16 @@ export class MiIOClient {
     method: string,
     params: A
   ): Promise<SimpleResponseSuccess<R>> {
-    await this.maybeHandshake();
+    const {
+      deviceId,
+      deviceStamp,
+      handshakeTimestamp,
+    } = await this.getRequestMetadata();
     const requestId = ++this.counter;
 
     const request = new NormalRequest(
-      Preconditions.checkExists(this.deviceId),
-      Math.floor(
-        (Date.now() - Preconditions.checkExists(this.lastHandshake)) * 0.001
-      ) + Preconditions.checkExists(this.deviceStamp),
+      deviceId,
+      Math.floor((Date.now() - handshakeTimestamp) * 0.001) + deviceStamp,
       Buffer.from(JSON.stringify({ id: requestId, method, params }))
     );
     const packet = await this.sendImpl(request, requestId);
@@ -142,14 +168,5 @@ export class MiIOClient {
     return response.data.byteLength > 0
       ? JSON.parse(response.data.toString())
       : undefined;
-  }
-
-  async simpleSend<A>(method: string, params: A): Promise<void> {
-    const response = await this.send<A, SimpleResponse<['ok']>>(method, params);
-    if (isError(response)) {
-      throw new Error(
-        `Fail to apply method ${method}: ${response.error.message} with code ${response.error.code}`
-      );
-    }
   }
 }

@@ -1,18 +1,19 @@
 import { Socket, RemoteInfo } from 'dgram';
 import { remove } from '../utils/array_utils';
 import { Logger } from './logger';
+import { Packet } from './packet';
 
 export interface MessageHandler {
   (message: Buffer, remoteInfo: RemoteInfo): void;
 }
 
 export interface MiIOService {
-  send(packet: Buffer, address: string, port: number): Promise<number>;
+  send(packet: Packet, address: string, port: number): Promise<number>;
   addMessageHandler(handler: MessageHandler): Unsubscriber;
   close(): Promise<void>;
 }
 
-type Unsubscriber = () => void;
+export type Unsubscriber = () => void;
 
 const BYTE_LETTERS = 2;
 const BYTE_PER_ROW = 4;
@@ -88,16 +89,16 @@ export class MiIONetwork implements MiIOService {
     };
   }
 
-  send = async (
-    packet: Buffer,
+  async send(
+    packet: Packet,
     address: string,
     port: number
-  ): Promise<number> => {
+  ): Promise<number> {
     await this.ensureReady();
     return new Promise((resolve, reject) => {
       this.logger.debug('Send message:');
-      this.logger.debug(formatPacketBuffer(packet.toString('hex')));
-      this.socket.send(packet, port, address, (err, bytes) => {
+      this.logger.debug(formatPacketBuffer(packet.raw.toString('hex')));
+      this.socket.send(packet.raw, port, address, (err, bytes) => {
         if (err) {
           reject(err);
         } else {
@@ -107,7 +108,7 @@ export class MiIONetwork implements MiIOService {
     });
   };
 
-  close = async () => {
+  async close () {
     await this.ensureReady();
     return new Promise<void>(resolve => {
       this.socket.close(() => resolve());
