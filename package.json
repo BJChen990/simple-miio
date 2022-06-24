@@ -6,7 +6,9 @@
   "types": "dist/index.d.ts",
   "author": "BJChen990 <bengjing@gmail.com>",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "postinstall": "tsc"
+  },
   "dependencies": {
     "@types/node": "^13.13.4",
     "typescript": "^4.5.5"
