@@ -29,16 +29,12 @@ export interface WaitingRequest {
   reject: (err: Error) => void;
 }
 
-type HandshakeInfo = {
-  deviceStamp: number;
-  handshakeTimestamp: number;
-  deviceId: number;
-};
-
 export class MiIOClient {
   protected counter: number;
 
-  private handshakeInfo: HandshakeInfo | undefined;
+  deviceId: number | undefined;
+  private handshakeTimestamp: number | undefined;
+  private deviceStamp: number | undefined;
 
   static DEFAULT_PORT = 54321;
 
@@ -99,18 +95,22 @@ export class MiIOClient {
 
   async getRequestMetadata() {
     if (
-      this.handshakeInfo == null ||
-      Date.now() - this.handshakeInfo.handshakeTimestamp >
+      !this.handshakeTimestamp ||
+      !this.deviceId ||
+      !this.deviceStamp ||
+      Date.now() - this.handshakeTimestamp >
         (this.config.handshakeTimeout ?? DEFAULT_TIMEOUT)
     ) {
       const response = await this.sendImpl(new HandshakeRequest());
-      this.handshakeInfo = {
-        deviceId: response.deviceId,
-        deviceStamp: response.stamp,
-        handshakeTimestamp: Date.now(),
-      };
+      this.deviceId = response.deviceId;
+      this.deviceStamp = response.stamp;
+      this.handshakeTimestamp = Date.now();
     }
-    return this.handshakeInfo;
+    return {
+      deviceId: this.deviceId,
+      deviceStamp: this.deviceStamp,
+      handshakeTimestamp: this.handshakeTimestamp,
+    };
   }
 
   private async sendImpl<T extends MiIORequest>(
