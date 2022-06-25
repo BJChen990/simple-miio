@@ -109,7 +109,7 @@ export class ResponseDeserializer implements Deserializer<MiIOResponse> {
     return (
       packet.unknown1.equals(DEFAULT_UNKNOWN_BUFFER) &&
       packet.packetLength === HEADER_BYTES &&
-      packet.checksum.equals(MIN_16_BYTES_BUFFER)
+      packet.checksum.equals(MAX_16_BYTES_BUFFER)
     );
   }
 
