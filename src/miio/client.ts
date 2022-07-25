@@ -101,10 +101,14 @@ export class MiIOClient {
       Date.now() - this.handshakeTimestamp >
         (this.config.handshakeTimeout ?? DEFAULT_TIMEOUT)
     ) {
+      this.logger.debug('handshake expired. Last handshake time: ' + this.handshakeTimestamp);
+      this.logger.debug('applying handshake again...');
       const response = await this.sendImpl(new HandshakeRequest());
       this.deviceId = response.deviceId;
       this.deviceStamp = response.stamp;
       this.handshakeTimestamp = Date.now();
+    } else {
+      this.logger.debug('reuse handshake. last handshake: ' + this.handshakeTimestamp);
     }
     return {
       deviceId: this.deviceId,
