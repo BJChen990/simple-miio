@@ -72,7 +72,7 @@ export class MiIOClient {
       const responseId =
         response.type === 'NORMAL'
           ? (JSON.parse(response.data.toString()) as SimpleResponseSuccess<any>)
-              .id
+            .id
           : undefined;
       const task = this.removeFromWaitQueue(responseId);
       if (!task) {

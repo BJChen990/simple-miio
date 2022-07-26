@@ -95,8 +95,8 @@ describe('MiIOClient', () => {
         );
         await flushPromises(jest);
         await flushPromises(jest);
-        jest.advanceTimersByTime(5000);
         await flushPromises(jest);
+        jest.advanceTimersByTime(5000);
         await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
