@@ -125,7 +125,11 @@ export class MiIOClient {
           reject,
         });
       });
-      this.logger.debug('Sending request:', JSON.stringify(request, null, 2));
+      this.logger.debug(
+        'Sending request. Type: ',
+        request.type,
+        JSON.stringify(request.data.toString(), null, 2)
+      );
       await this.client.send(
         this.serializer.serialize(request),
         this.config.address,
@@ -154,10 +158,12 @@ export class MiIOClient {
     );
     const packet = await this.sendImpl(request, requestId);
     const response = this.deserializer.deserialize(packet);
-    this.logger.debug('Received response:', JSON.stringify(response, null, 2));
-    return response.data.byteLength > 0
-      ? JSON.parse(response.data.toString())
-      : undefined;
+    if (response.data.byteLength <= 0) {
+      throw new Error('Received byte length less then or equal to 0');
+    }
+    const message = JSON.parse(response.data.toString());
+    this.logger.debug('Received response:', JSON.stringify(message, null, 2));
+    return message;
   }
 
   private addToWaitQueue(request: WaitingRequest) {
