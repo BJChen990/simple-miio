@@ -51,6 +51,7 @@ export class MiIOClient {
     private readonly config: {
       address: string;
       port: number;
+      requestTimeout?: number;
       handshakeTimeout?: number;
       counter?: number;
     },
@@ -111,39 +112,38 @@ export class MiIOClient {
     };
   }
 
-  private sendImpl = retry(
-    async <T extends MiIORequest>(request: T, requestId?: number) => {
-      const promise = new Promise<PacketImpl>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout'));
-          this.removeFromWaitQueue(requestId);
-        }, 10000);
-        this.addToWaitQueue({
-          requestId,
-          timeout,
-          resolve,
-          reject,
-        });
+  private async sendImpl<T extends MiIORequest>(
+    request: T,
+    requestId?: number
+  ) {
+    const promise = new Promise<PacketImpl>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout'));
+        this.removeFromWaitQueue(requestId);
+      }, this.config.requestTimeout ?? DEFAULT_TIMEOUT);
+      this.addToWaitQueue({
+        requestId,
+        timeout,
+        resolve,
+        reject,
       });
-      this.logger.debug(
-        'Sending request. Type: ',
-        request.type,
-        JSON.stringify(request.data.toString(), null, 2)
-      );
-      await this.client.send(
-        this.serializer.serialize(request),
-        this.config.address,
-        this.config.port
-      );
-      return promise;
-    },
-    3
-  );
+    });
+    this.logger.debug(
+      'Sending request. Type: ',
+      request.type,
+      JSON.stringify(request.data.toString(), null, 2)
+    );
+    await this.client.send(
+      this.serializer.serialize(request),
+      this.config.address,
+      this.config.port
+    );
+    return promise;
+  }
 
-  async send<A, R>(
-    method: string,
-    params: A
-  ): Promise<SimpleResponseSuccess<R>> {
+  send = retry(async <A, R>(method: string, params: A): Promise<
+    SimpleResponseSuccess<R>
+  > => {
     const {
       deviceId,
       deviceStamp,
@@ -164,7 +164,7 @@ export class MiIOClient {
     const message = JSON.parse(response.data.toString());
     this.logger.debug('Received response:', JSON.stringify(message, null, 2));
     return message;
-  }
+  }, 3);
 
   private addToWaitQueue(request: WaitingRequest) {
     const hash = MiIOClient.getWaitQueueHash(

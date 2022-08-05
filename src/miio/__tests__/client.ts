@@ -95,8 +95,8 @@ describe('MiIOClient', () => {
         );
         await flushPromises(jest);
         await flushPromises(jest);
-        await flushPromises(jest);
         jest.advanceTimersByTime(5000);
+        await flushPromises(jest);
         await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
@@ -232,6 +232,10 @@ describe('MiIOClient', () => {
       });
       function emitMockedResponse(response: MiIOResponse) {
         deserializer.deserialize.mockReturnValueOnce(response);
+        // Normal message will be deserialized twice
+        if (response.type === 'NORMAL') {
+          deserializer.deserialize.mockReturnValueOnce(response);
+        }
         messageHandlers.forEach(handler =>
           handler(FAKE_PACKET.raw, {
             address: ADDRESS,
