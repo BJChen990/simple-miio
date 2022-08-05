@@ -95,8 +95,8 @@ describe('MiIOClient', () => {
         );
         await flushPromises(jest);
         await flushPromises(jest);
-        jest.advanceTimersByTime(5000);
         await flushPromises(jest);
+        jest.advanceTimersByTime(5000);
         await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
@@ -124,12 +124,18 @@ describe('MiIOClient', () => {
       });
 
       it('reuses handshake when handshake is not expired', async () => {
+        jest.useFakeTimers('modern').setSystemTime(0);
         let promise = client.send('method', []);
-        await flushPromises();
+        await flushPromises(jest);
+        await flushPromises(jest);
         emitMockedResponse(
           new HandshakeResponse(DEVICE_ID, INITIAL_STAMP, Buffer.of())
         );
-        await flushPromises();
+        await flushPromises(jest);
+        await flushPromises(jest);
+        await flushPromises(jest);
+        jest.advanceTimersByTime(100);
+        await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
             DEVICE_ID,
@@ -140,7 +146,10 @@ describe('MiIOClient', () => {
         await promise;
 
         promise = client.send('method2', []);
-        await flushPromises();
+        await flushPromises(jest);
+        await flushPromises(jest);
+        jest.advanceTimersByTime(100);
+        await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
             DEVICE_ID,
@@ -181,9 +190,13 @@ describe('MiIOClient', () => {
         emitMockedResponse(
           new HandshakeResponse(DEVICE_ID, INITIAL_STAMP, Buffer.of())
         );
-        for (let i = 0; i < 6; i++) {
-          await flushPromises(jest);
-        }
+        await flushPromises(jest);
+        await flushPromises(jest);
+        await flushPromises(jest);
+        await flushPromises(jest);
+        jest.advanceTimersByTime(100);
+        await flushPromises(jest);
+        await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
             DEVICE_ID,
@@ -196,12 +209,16 @@ describe('MiIOClient', () => {
 
         promise = client.send('method2', []);
         await flushPromises(jest);
+        await flushPromises(jest);
         emitMockedResponse(
           new HandshakeResponse(DEVICE_ID, INITIAL_STAMP, Buffer.of())
         );
-        for (let i = 0; i < 6; i++) {
-          await flushPromises(jest);
-        }
+        await flushPromises(jest);
+        await flushPromises(jest);
+        await flushPromises(jest);
+        jest.advanceTimersByTime(100);
+        await flushPromises(jest);
+        await flushPromises(jest);
         emitMockedResponse(
           new NormalResponse(
             DEVICE_ID,

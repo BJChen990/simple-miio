@@ -30,6 +30,8 @@ export interface WaitingRequest {
   reject: (err: Error) => void;
 }
 
+const delay = (timeout: number) => new Promise(resolve => setTimeout(resolve, timeout));
+
 export class MiIOClient {
   protected counter: number;
 
@@ -150,6 +152,9 @@ export class MiIOClient {
       handshakeTimestamp,
     } = await this.getRequestMetadata();
     const requestId = ++this.counter;
+    
+    // Add a delay to prevent sending request too early after handshake.
+    await delay(100);
 
     const request = new NormalRequest(
       deviceId,
