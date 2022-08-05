@@ -2,8 +2,8 @@ export function retry<A extends any[], R>(
   fn: (...args: A) => Promise<R>,
   initialQuota: number
 ): (...args: A) => Promise<R> {
-  let quota = initialQuota;
   return async (...args: A) => {
+    let quota = initialQuota;
     let lastError: Error | undefined;
     while (quota > 0) {
       try {
