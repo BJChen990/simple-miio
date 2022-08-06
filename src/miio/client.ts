@@ -86,7 +86,13 @@ export class MiIOClient {
     });
   }
 
-  async getRequestMetadata() {
+  invalidateHandshake() {
+    this.handshakeTimestamp = undefined;
+    this.deviceId = undefined;
+    this.deviceStamp = undefined;
+  }
+
+  private async getRequestMetadata() {
     if (
       !this.handshakeTimestamp ||
       !this.deviceId ||
